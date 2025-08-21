@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv*/
+
+# Pytest / Playwright artifacts
+.pytest_cache/
+test-results/
+report/
+playwright-report/
+playwright/.cache/
+
+# ENV & secrets
+.env
+.env.*
+!.env.example
+
+# System/IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Node (nếu có)
+node_modules/
+
+# Docker
+*.log
