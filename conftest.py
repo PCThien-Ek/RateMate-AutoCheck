@@ -1,58 +1,83 @@
+# conftest.py
 import os
 import pytest
 from dotenv import load_dotenv
 
-# Tự load .env nếu có
-load_dotenv(dotenv_path=os.getenv("DOTENV_PATH", ".env"), override=True)
+load_dotenv()  # đọc .env nếu có
 
-def _pick_base_url() -> str:
-    env = os.getenv("ENV", "prod").lower()
+def _split_csv(val, default="en"):
+    return [s.strip() for s in (val or default).split(",") if s.strip()]
+
+def _routes_from_env(key, fallback):
+    raw = os.getenv(key)
+    return [p.strip() for p in raw.split(",") if p.strip()] if raw else list(fallback)
+
+# ======== CẤU HÌNH CHO 1 WEB: https://store.ratemate.top ========
+def _cfg_ratemate_tuple():
+    # Tôn trọng ENV=prod|staging, rồi mới fallback BASE_URL
+    env = (os.getenv("ENV") or "prod").lower()
     if env == "staging":
-        return os.getenv("BASE_URL_STAGING")
-    return os.getenv("BASE_URL_PROD")
+        base_url = os.getenv("BASE_URL_STAGING")
+    else:
+        base_url = os.getenv("BASE_URL_PROD")
+    base_url = base_url or os.getenv("BASE_URL")
+    assert base_url, "Thiếu BASE_URL_PROD/BASE_URL_STAGING hoặc BASE_URL cho RateMate"
+
+    auth_paths = {
+        "login": os.getenv("LOGIN_PATH", "/en/login"),
+        # nếu form đăng ký chung trang login, đổi mặc định này lại '/en/login'
+        "register": os.getenv("REGISTER_PATH", "/en/register"),
+    }
+    credentials = {
+        # Ưu tiên biến an toàn cho E2E test; fallback về biến cũ nếu chưa chuyển
+        "email": os.getenv("E2E_EMAIL") or os.getenv("LOGIN_EMAIL", ""),
+        "password": os.getenv("E2E_PASSWORD") or os.getenv("LOGIN_PASSWORD", ""),
+    }
+    locales = _split_csv(os.getenv("LOCALES"), "en")
+    routes = _routes_from_env(
+        "SMOKE_ROUTES",
+        ["/en/login", "/en/store", "/en/product", "/en/QR"],
+    )
+    return "ratemate", base_url.rstrip("/"), auth_paths, credentials, locales, routes
+
+def _active_site_cfg():
+    """Trả về (site, base_url, auth_paths, credentials, locales, routes)."""
+    return _cfg_ratemate_tuple()
+
+# ================== PYTEST ==================
+def pytest_configure(config):
+    site, base_url, *_ = _active_site_cfg()
+    md = getattr(config, "_metadata", None)
+    if md is not None:
+        md["SITE"] = site
+        md["ENV"] = os.getenv("ENV", "prod")
+        md["Base URL"] = base_url
+
+@pytest.fixture(scope="session")
+def site():
+    return _active_site_cfg()[0]
 
 @pytest.fixture(scope="session")
 def base_url():
-    url = _pick_base_url()
-    assert url, "BASE_URL_* chưa được cấu hình trong .env"
-    return url.rstrip("/")
+    # Khớp với plugin pytest-base-url nếu bạn dùng
+    return _active_site_cfg()[1]
 
 @pytest.fixture(scope="session")
 def auth_paths():
-    return {
-        "login": os.getenv("LOGIN_PATH", "/en/login"),
-        "register": os.getenv("REGISTER_PATH", "/en/register"),
-    }
+    return _active_site_cfg()[2]
 
 @pytest.fixture(scope="session")
 def credentials():
-    return {
-        "email": os.getenv("LOGIN_EMAIL"),
-        "password": os.getenv("LOGIN_PASSWORD"),
-    }
+    return _active_site_cfg()[3]
 
-# ---- PLAYWRIGHT FIXTURES ----
-# Dùng option --browser (có sẵn của pytest-playwright): chromium | firefox | webkit
-# KHÔNG tự add lại option --browser để tránh xung đột.
+@pytest.fixture(scope="session")
+def locales():
+    return _active_site_cfg()[4]
 
-@pytest.fixture
-def context_kwargs():
-    return {
-        "locale": "en-US",
-        "permissions": [],
-        "java_script_enabled": True,
-        # headless: mặc định là True trên CI/container
-    }
+@pytest.fixture(scope="session")
+def routes():
+    return _active_site_cfg()[5]
 
 @pytest.fixture
-def new_context(browser, context_kwargs):
-    # 'browser' fixture do pytest-playwright cung cấp
-    ctx = browser.new_context(**context_kwargs)
-    yield ctx
-    ctx.close()
-
-@pytest.fixture
-def new_page(new_context):
-    page = new_context.new_page()
-    yield page
-    page.close()
+def new_page(page):
+    return page
